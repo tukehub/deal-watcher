@@ -9,22 +9,19 @@ from playwright.async_api import async_playwright
 
 DEFAULT_MIN_DISCOUNT = 50
 INSANE_DISCOUNT = 80
+NON_TECH_MAX_EUR = 50.0
+ALL_PER_EUR = 98.0
 STATE_FILE = "seen_deals.json"
 
 WISHLIST = [
-    "xiaomi tv box",
-    "nvme",
-    "ulanzi",
-    "nd filter",
-    "monitor",
-    "shelly",
-    "ups",
-    "scala1",
-    "scala2",
-    "gan charger",
+    # Android / Streaming TV Boxes
+    "android box", "tv box", "mi box", "xiaomi tv", "google tv",
+    "chromecast", "nvidia shield", "fire tv", "apple tv", "streaming",
+    # Desk, Camera & Lab Gear
+    "nvme", "ulanzi", "nd filter", "monitor", "shelly", "ups",
+    "scala1", "scala2", "gan charger",
 ]
 
-# Drop bulky home/kitchen appliances across AL, EN, and GR
 EXCLUDED_KEYWORDS = [
     "lavatrice", "lavatriçe", "rrobalarëse", "rrobalarese", "washing machine", "πλυντήριο",
     "tharëse", "tharese", "dryer", "στεγνωτήριο",
@@ -53,14 +50,16 @@ TARGETS = [
     {"store": "Aztech KS", "url": "https://aztechonline.com/offers", "card_selector": "[class*='product'], .product-item, article", "min_discount": 50},
 
     # --- GREECE ---
-    {"store": "Public GR", "url": "https://www.public.gr/root/black-friday", "card_selector": "[class*='product'], .product-card, article", "min_discount": 50},
-    {"store": "Plaisio GR", "url": "https://www.plaisio.gr/campaign/blackfriday", "card_selector": "[class*='product'], .product-item, article", "min_discount": 50},
+    {"store": "Plaisio GR", "url": "https://www.plaisio.gr/list/statusFlags--BlackFriday", "card_selector": "[class*='product'], .product-item, article", "min_discount": 45},
+    {"store": "BestPrice GR", "url": "https://www.bestprice.gr/black-friday", "card_selector": "[class*='product'], .p-item, article", "min_discount": 45},
+    {"store": "Public GR", "url": "https://www.public.gr/root/black-friday", "card_selector": "[class*='product'], .product-card, article", "min_discount": 45},
 ]
 
 ELECTRONICS_KEYWORDS = [
     "laptop", "macbook", "monitor", "ssd", "nvme", "ram", "gpu", "rtx",
     "phone", "celular", "iphone", "samsung", "galaxy", "xiaomi", "redmi", "κινητό",
     "tablet", "ipad", "watch", "tv", "televizor", "oled", "qled", "uhd", "τηλεόραση",
+    "android box", "tv box", "mi box", "google tv", "chromecast", "shield", "fire tv", "apple tv", "streaming",
     "audio", "speaker", "boks", "jbl", "sony", "headphone", "kufje", "airpods", "ακουστικά",
     "ps5", "playstation", "nintendo", "switch", "gaming", "mouse", "tastier", "keyboard",
     "router", "wi-fi", "wifi", "camera", "kamera", "lens", "lente",
@@ -73,15 +72,89 @@ def is_excluded(text: str, url: str) -> bool:
     return any(bad in haystack for bad in EXCLUDED_KEYWORDS)
 
 
+def is_tech(title: str, url: str) -> bool:
+    haystack = f"{title} {url}".lower()
+    return any(kw in haystack for kw in ELECTRONICS_KEYWORDS)
+
+
+def parse_number(raw: str) -> float | None:
+    cleaned = raw.strip()
+    if "," in cleaned and "." in cleaned:
+        # e.g. 1.299,00 or 1,299.00
+        if cleaned.rfind(",") > cleaned.rfind("."):
+            cleaned = cleaned.replace(".", "").replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    elif "," in cleaned:
+        # e.g. 49,90 (EU decimal) vs 15,999 (AL thousands)
+        parts = cleaned.split(",")
+        if len(parts[-1]) == 2:
+            cleaned = cleaned.replace(",", ".")
+        else:
+            cleaned = cleaned.replace(",", "")
+    elif "." in cleaned:
+        parts = cleaned.split(".")
+        if len(parts[-1]) == 3:
+            cleaned = cleaned.replace(".", "")
+    try:
+        return float(cleaned)
+    except ValueError:
+        return None
+
+
+def parse_prices_and_eur(text: str) -> tuple[str, float | None, list[float]]:
+    """Returns (display_price, current_price_in_eur, all_numeric_prices_found)."""
+    matches = re.findall(
+        r"(\d[\d.,]*)\s*(ALL|Lekë|L|€|EUR)|(?:€|EUR)\s*(\d[\d.,]*)",
+        text,
+        re.IGNORECASE,
+    )
+    parsed = []
+    for num1, curr, num2 in matches:
+        raw_num = num1 or num2
+        currency = (curr or "€").upper()
+        val = parse_number(raw_num)
+        if val is None or val <= 0:
+            continue
+        is_all = currency in {"ALL", "LEKË", "L"}
+        eur_val = (val / ALL_PER_EUR) if is_all else val
+        label = f"{int(val):,} ALL" if is_all else f"€{val:,.2f}"
+        parsed.append((val, eur_val, label))
+
+    if not parsed:
+        return "", None, []
+
+    # Current/sale price is typically the lowest listed price on the card
+    lowest = min(parsed, key=lambda x: x[1])
+    raw_values = [p[0] for p in parsed]
+    return lowest[2], lowest[1], raw_values
+
+
+def extract_discount(text: str, raw_prices: list[float]) -> int:
+    # 1. Explicit percentage badges (supports -59%, 49,23%, 55% off)
+    pct_matches = re.findall(r"(?<!\d)(\d{2})(?:[.,]\d+)?\s*%", text)
+    valid = [int(m) for m in pct_matches if 5 <= int(m) <= 95]
+    if valid:
+        return max(valid)
+
+    # 2. Fallback: calculate from old price vs sale price (e.g. Plaisio 189,00€ -> 149,00€)
+    if len(raw_prices) >= 2:
+        high, low = max(raw_prices), min(raw_prices)
+        if high > low > 0:
+            calc = round(((high - low) / high) * 100)
+            if 5 <= calc <= 95:
+                return calc
+    return 0
+
+
 def classify_bucket(deal: dict) -> str:
     if deal["discount"] >= INSANE_DISCOUNT:
         return "🚨 INSANE DEALS (-80%+)"
     if deal["wishlist"]:
-        return "🎯 WISHLIST HITS"
-    haystack = f"{deal['title']} {deal['url']}".lower()
-    if any(kw in haystack for kw in ELECTRONICS_KEYWORDS):
+        return "🎯 WISHLIST & TV BOXES"
+    if deal["is_tech"]:
         return "💻 ELECTRONICS & TECH"
-    return "📦 OTHER GEAR"
+    return "📦 OTHER GEAR (≤ €50)"
 
 
 def load_seen() -> dict:
@@ -122,9 +195,9 @@ async def send_telegram(grouped_deals: dict[str, list[dict]]) -> None:
 
     bucket_order = [
         "🚨 INSANE DEALS (-80%+)",
-        "🎯 WISHLIST HITS",
+        "🎯 WISHLIST & TV BOXES",
         "💻 ELECTRONICS & TECH",
-        "📦 OTHER GEAR",
+        "📦 OTHER GEAR (≤ €50)",
     ]
 
     async with httpx.AsyncClient(timeout=20) as client:
@@ -133,16 +206,13 @@ async def send_telegram(grouped_deals: dict[str, list[dict]]) -> None:
             if not items:
                 continue
 
-            # Sort highest discount first
             items.sort(key=lambda x: x["discount"], reverse=True)
-
             lines = [f"<b>{bucket} ({len(items)})</b>"]
             for d in items:
                 badge = f"<b>-{d['discount']}%</b>" if d["discount"] > 0 else f"<b>{d['wishlist']}</b>"
                 price = f" • <b>{d['price']}</b>" if d["price"] else ""
                 lines.append(f"• {badge} | {d['store']} | <a href=\"{d['url']}\">{d['title']}</a>{price}")
 
-            # Send each bucket cleanly (chunking only if a single bucket exceeds Telegram's 4096-char limit)
             chunk = ""
             for line in lines:
                 if len(chunk) + len(line) + 1 > 3800:
@@ -154,17 +224,6 @@ async def send_telegram(grouped_deals: dict[str, list[dict]]) -> None:
                 await post_telegram_text(client, token, chat_id, chunk)
 
 
-def extract_discount(text: str) -> int:
-    matches = re.findall(r"(?<!\d)(\d{2})\s*%", text)
-    valid = [int(m) for m in matches if 5 <= int(m) <= 95]
-    return max(valid) if valid else 0
-
-
-def extract_price(text: str) -> str:
-    m = re.search(r"(\d[\d.,]*\s*(?:ALL|Lekë|L|€|EUR))", text, re.IGNORECASE)
-    return m.group(1).strip() if m else ""
-
-
 async def scrape_store(page, target: dict) -> list[dict]:
     store = target["store"]
     base_url = target["url"]
@@ -173,7 +232,7 @@ async def scrape_store(page, target: dict) -> list[dict]:
 
     try:
         await page.goto(base_url, wait_until="domcontentloaded", timeout=45000)
-        await page.wait_for_timeout(4000)
+        await page.wait_for_timeout(4500)
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight / 2)")
         await page.wait_for_timeout(1500)
     except Exception as exc:
@@ -212,14 +271,22 @@ async def scrape_store(page, target: dict) -> list[dict]:
             for l in text.splitlines()
             if len(l.strip()) > 6
             and "%" not in l
-            and not re.match(r"^[\d.,\s]+(ALL|Lekë|L|€)?$", l.strip(), re.IGNORECASE)
+            and "κέρδος" not in l.lower()
+            and not re.match(r"^[\d.,\s]+(ALL|Lekë|L|€|EUR)?$", l.strip(), re.IGNORECASE)
         ]
         title = lines[0][:75] if lines else full_url.split("/")[-1][:75]
-        discount = extract_discount(text)
-        price = extract_price(text)
+
+        price_label, price_eur, raw_prices = parse_prices_and_eur(text)
+        discount = extract_discount(text, raw_prices)
+        tech_flag = is_tech(f"{title} {text}", full_url)
 
         title_lower = f"{title} {full_url}".lower()
         wishlist_hit = next((w for w in WISHLIST if w in title_lower), None)
+
+        # Enforce <= €50 cap on all non-tech items
+        if not tech_flag and not wishlist_hit:
+            if price_eur is None or price_eur > NON_TECH_MAX_EUR:
+                continue
 
         if discount >= min_disc or wishlist_hit:
             deals.append(
@@ -227,12 +294,13 @@ async def scrape_store(page, target: dict) -> list[dict]:
                     "store": store,
                     "title": title,
                     "discount": discount,
-                    "price": price,
+                    "price": price_label,
                     "wishlist": wishlist_hit,
+                    "is_tech": tech_flag,
                     "url": full_url,
                 }
             )
-    print(f"  -> Found {len(deals)} clean deals on {store}")
+    print(f"  -> Found {len(deals)} matching deals on {store} (from {len(raw_cards)} raw cards)")
     return deals
 
 
@@ -244,15 +312,21 @@ async def main() -> None:
         browser = await p.chromium.launch(
             channel="chrome" if os.getenv("GITHUB_ACTIONS") else None,
             headless=True,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-blink-features=AutomationControlled",
+            ],
         )
         context = await browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
             ),
+            locale="el-GR",
             viewport={"width": 1366, "height": 900},
         )
+        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         page = await context.new_page()
         await page.route(
             "**/*",
