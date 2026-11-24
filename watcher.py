@@ -8,6 +8,7 @@ import httpx
 from playwright.async_api import async_playwright
 
 DEFAULT_MIN_DISCOUNT = 50
+INSANE_DISCOUNT = 80
 STATE_FILE = "seen_deals.json"
 
 WISHLIST = [
@@ -23,83 +24,64 @@ WISHLIST = [
     "gan charger",
 ]
 
+# Drop bulky home/kitchen appliances across AL, EN, and GR
+EXCLUDED_KEYWORDS = [
+    "lavatrice", "lavatriçe", "rrobalarëse", "rrobalarese", "washing machine", "πλυντήριο",
+    "tharëse", "tharese", "dryer", "στεγνωτήριο",
+    "frigorifer", "ngrirës", "ngrires", "fridge", "refrigerator", "ψυγείο",
+    "furre", "furrë", "oven", "φούρνος", "pianure", "pianurë", "hob", "εστίες",
+    "enëlarëse", "enelarese", "dishwasher",
+    "kondicioner", "inverter", "btu", "air conditioner", "κλιματιστικό",
+    "fshese", "fshesë", "thithese", "thithëse", "vacuum", "σκούπα",
+    "hekur", "iron", "σίδερο",
+    "ekspres", "kafe", "coffee", "καφετιέρα", "air fryer", "mikrovale", "mikrovalë", "microwave",
+    "tenxhere", "tigan", "tefal", "kuzhin", "cookware", "blender", "mikser", "toster",
+]
+
 TARGETS = [
-    {
-        "store": "Vodafone eShop",
-        "url": "https://eshop.vodafone.al/en/special-offer",
-        "card_selector": "a[href*='/en/']",
-        "min_discount": 40,
-    },
-    {
-        "store": "One Albania",
-        "url": "https://www.one.al/sq/individi/e-shop/e_shop/telefona",
-        "card_selector": "[class*='product'], .card, article",
-        "min_discount": 40,
-    },
-    {
-        "store": "Neptun Oferta",
-        "url": "https://neptun.al/ns-newsarticle-black-friday-oferta-2026",
-        "card_selector": "[class*='product'], .product-item, article",
-        "min_discount": 50,
-    },
-    {
-        "store": "Neptun Gaming",
-        "url": "https://www.neptun.al/ns-newsarticle-black-friday-gaming",
-        "card_selector": "[class*='product'], .product-item, article",
-        "min_discount": 45,
-    },
-    {
-        "store": "Globe",
-        "url": "https://globe.al/black-friday",
-        "card_selector": ".product-miniature, .product-item, [class*='product']",
-        "min_discount": 50,
-    },
-    {
-        "store": "Gjirafa50",
-        "url": "https://gjirafa50.com/te-gjitha-ne-zbritje-2026",
-        "card_selector": ".product-item, [class*='product-box'], article",
-        "min_discount": 50,
-    },
-    {
-        "store": "Foleja",
-        "url": "https://www.foleja.al/",
-        "card_selector": ".product-box, .card-body, [class*='product']",
-        "min_discount": 50,
-    },
+    # --- ALBANIA ---
+    {"store": "Vodafone AL", "url": "https://eshop.vodafone.al/en/special-offer", "card_selector": "a[href*='/en/']", "min_discount": 40},
+    {"store": "One AL", "url": "https://www.one.al/sq/individi/e-shop/e_shop/telefona", "card_selector": "[class*='product'], .card, article", "min_discount": 40},
+    {"store": "Neptun AL", "url": "https://neptun.al/ns-newsarticle-black-friday-oferta-2026", "card_selector": "[class*='product'], .product-item, article", "min_discount": 50},
+    {"store": "Neptun Gaming", "url": "https://www.neptun.al/ns-newsarticle-black-friday-gaming", "card_selector": "[class*='product'], .product-item, article", "min_discount": 45},
+    {"store": "Globe AL", "url": "https://globe.al/black-friday", "card_selector": ".product-miniature, .product-item, [class*='product']", "min_discount": 50},
+    {"store": "Foleja AL", "url": "https://www.foleja.al/", "card_selector": ".product-box, .card-body, [class*='product']", "min_discount": 50},
+
+    # --- KOSOVO ---
+    {"store": "Gjirafa50 KS", "url": "https://gjirafa50.com/te-gjitha-ne-zbritje-2026", "card_selector": ".product-item, [class*='product-box'], article", "min_discount": 50},
+    {"store": "Neptun KS", "url": "https://www.neptun-ks.com/", "card_selector": "[class*='product'], .product-item, article", "min_discount": 50},
+    {"store": "Aztech KS", "url": "https://aztechonline.com/offers", "card_selector": "[class*='product'], .product-item, article", "min_discount": 50},
+
+    # --- GREECE ---
+    {"store": "Public GR", "url": "https://www.public.gr/root/black-friday", "card_selector": "[class*='product'], .product-card, article", "min_discount": 50},
+    {"store": "Plaisio GR", "url": "https://www.plaisio.gr/campaign/blackfriday", "card_selector": "[class*='product'], .product-item, article", "min_discount": 50},
 ]
 
-CATEGORY_RULES = [
-    (
-        "💻 ELECTRONICS & TECH",
-        [
-            "laptop", "macbook", "monitor", "ssd", "nvme", "ram", "gpu", "rtx",
-            "phone", "celular", "iphone", "samsung", "galaxy", "xiaomi", "redmi",
-            "tablet", "ipad", "watch", "tv", "televizor", "oled", "qled", "uhd",
-            "audio", "speaker", "boks", "jbl", "sony", "headphone", "kufje", "airpods",
-            "ps5", "playstation", "nintendo", "switch", "gaming", "mouse", "tastier",
-            "keyboard", "router", "wi-fi", "wifi", "camera", "kamera", "lens", "lente",
-            "charger", "karikues", "usb", "hdmi", "ups", "shelly", "smart", "box",
-        ],
-    ),
-    (
-        "🏠 HOME & APPLIANCES",
-        [
-            "lavatrice", "lavatriçe", "tharëse", "tharese", "frigorifer", "furre",
-            "furrë", "pianure", "kondicioner", "inverter", "btu", "fshese", "fshesë",
-            "vacuum", "hekur", "ekspres", "kafe", "air fryer", "mikrovale", "tenxhere",
-            "tigan", "tefal", "kuzhin", "tavoline", "tavolinë", "karrige", "dyshek",
-            "pompe", "pompë", "scala",
-        ],
-    ),
+ELECTRONICS_KEYWORDS = [
+    "laptop", "macbook", "monitor", "ssd", "nvme", "ram", "gpu", "rtx",
+    "phone", "celular", "iphone", "samsung", "galaxy", "xiaomi", "redmi", "κινητό",
+    "tablet", "ipad", "watch", "tv", "televizor", "oled", "qled", "uhd", "τηλεόραση",
+    "audio", "speaker", "boks", "jbl", "sony", "headphone", "kufje", "airpods", "ακουστικά",
+    "ps5", "playstation", "nintendo", "switch", "gaming", "mouse", "tastier", "keyboard",
+    "router", "wi-fi", "wifi", "camera", "kamera", "lens", "lente",
+    "charger", "karikues", "usb", "hdmi", "ups", "shelly", "smart", "box", "powerbank",
 ]
 
 
-def classify_category(text: str, url: str) -> str:
+def is_excluded(text: str, url: str) -> bool:
     haystack = f"{text} {url}".lower()
-    for label, keywords in CATEGORY_RULES:
-        if any(kw in haystack for kw in keywords):
-            return label
-    return "📦 OTHER DEALS"
+    return any(bad in haystack for bad in EXCLUDED_KEYWORDS)
+
+
+def classify_bucket(deal: dict) -> str:
+    if deal["discount"] >= INSANE_DISCOUNT:
+        return "🚨 INSANE DEALS (-80%+)"
+    if deal["wishlist"]:
+        return "🎯 WISHLIST HITS"
+    haystack = f"{deal['title']} {deal['url']}".lower()
+    if any(kw in haystack for kw in ELECTRONICS_KEYWORDS):
+        return "💻 ELECTRONICS & TECH"
+    return "📦 OTHER GEAR"
 
 
 def load_seen() -> dict:
@@ -117,43 +99,59 @@ def save_seen(data: dict) -> None:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
 
-async def send_telegram(grouped_lines: dict[str, list[str]]) -> None:
+async def post_telegram_text(client: httpx.AsyncClient, token: str, chat_id: str, text: str) -> None:
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    resp = await client.post(
+        url,
+        json={
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        },
+    )
+    resp.raise_for_status()
+
+
+async def send_telegram(grouped_deals: dict[str, list[dict]]) -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         print("Telegram secrets not set; skipping push notification.")
         return
 
-    sections = []
-    for category in ["💻 ELECTRONICS & TECH", "🏠 HOME & APPLIANCES", "📦 OTHER DEALS"]:
-        items = grouped_lines.get(category, [])
-        if items:
-            sections.append(f"<b>{category}</b>\n" + "\n".join(items))
-
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    chunks, current = [], ""
-    for section in sections:
-        if len(current) + len(section) + 2 > 3800:
-            if current:
-                chunks.append(current)
-            current = section
-        else:
-            current = f"{current}\n\n{section}" if current else section
-    if current:
-        chunks.append(current)
+    bucket_order = [
+        "🚨 INSANE DEALS (-80%+)",
+        "🎯 WISHLIST HITS",
+        "💻 ELECTRONICS & TECH",
+        "📦 OTHER GEAR",
+    ]
 
     async with httpx.AsyncClient(timeout=20) as client:
-        for chunk in chunks:
-            resp = await client.post(
-                url,
-                json={
-                    "chat_id": chat_id,
-                    "text": chunk,
-                    "parse_mode": "HTML",
-                    "disable_web_page_preview": True,
-                },
-            )
-            resp.raise_for_status()
+        for bucket in bucket_order:
+            items = grouped_deals.get(bucket, [])
+            if not items:
+                continue
+
+            # Sort highest discount first
+            items.sort(key=lambda x: x["discount"], reverse=True)
+
+            lines = [f"<b>{bucket} ({len(items)})</b>"]
+            for d in items:
+                badge = f"<b>-{d['discount']}%</b>" if d["discount"] > 0 else f"<b>{d['wishlist']}</b>"
+                price = f" • <b>{d['price']}</b>" if d["price"] else ""
+                lines.append(f"• {badge} | {d['store']} | <a href=\"{d['url']}\">{d['title']}</a>{price}")
+
+            # Send each bucket cleanly (chunking only if a single bucket exceeds Telegram's 4096-char limit)
+            chunk = ""
+            for line in lines:
+                if len(chunk) + len(line) + 1 > 3800:
+                    await post_telegram_text(client, token, chat_id, chunk)
+                    chunk = f"<b>{bucket} (cont.)</b>\n{line}"
+                else:
+                    chunk = f"{chunk}\n{line}" if chunk else line
+            if chunk:
+                await post_telegram_text(client, token, chat_id, chunk)
 
 
 def extract_discount(text: str) -> int:
@@ -206,6 +204,9 @@ async def scrape_store(page, target: dict) -> list[dict]:
             continue
         seen_urls.add(full_url)
 
+        if is_excluded(text, full_url):
+            continue
+
         lines = [
             l.strip()
             for l in text.splitlines()
@@ -213,7 +214,7 @@ async def scrape_store(page, target: dict) -> list[dict]:
             and "%" not in l
             and not re.match(r"^[\d.,\s]+(ALL|Lekë|L|€)?$", l.strip(), re.IGNORECASE)
         ]
-        title = lines[0][:90] if lines else full_url.split("/")[-1][:90]
+        title = lines[0][:75] if lines else full_url.split("/")[-1][:75]
         discount = extract_discount(text)
         price = extract_price(text)
 
@@ -228,11 +229,10 @@ async def scrape_store(page, target: dict) -> list[dict]:
                     "discount": discount,
                     "price": price,
                     "wishlist": wishlist_hit,
-                    "category": classify_category(f"{title} {text}", full_url),
                     "url": full_url,
                 }
             )
-    print(f"  -> Found {len(deals)} matching deals on {store}")
+    print(f"  -> Found {len(deals)} clean deals on {store}")
     return deals
 
 
@@ -269,17 +269,10 @@ async def main() -> None:
 
     for d in all_deals:
         key = f"{d['store']}|{d['url']}|{d['discount']}"
-        price_str = f" — <b>{d['price']}</b>" if d["price"] else ""
-        tag = (
-            f"🔥 <b>-{d['discount']}%</b>"
-            if d["discount"] > 0
-            else f"🎯 <b>{d['wishlist']}</b>"
-        )
-        line = f"• {tag} [{d['store']}] <a href=\"{d['url']}\">{d['title']}</a>{price_str}"
-
         if key not in seen:
             seen[key] = True
-            grouped_new[d["category"]].append(line)
+            bucket = classify_bucket(d)
+            grouped_new[bucket].append(d)
             new_count += 1
 
     if new_count:
