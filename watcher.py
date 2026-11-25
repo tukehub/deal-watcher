@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import os
 import re
@@ -106,7 +107,6 @@ def parse_number(raw: str) -> float | None:
 
 
 def strip_savings_and_installments(text: str) -> str:
-    """Remove 'Κέρδος 40,00 €' / 'Save €40' / monthly installment amounts before price extraction."""
     cleaned = re.sub(
         r"(?:κέρδος|έκπτωση|όφελος|kurseni|zbritje|save)\s*:?\s*[\d.,]+\s*(?:ALL|Lekë|L|€|EUR)?",
         " ",
@@ -129,7 +129,6 @@ def strip_savings_and_installments(text: str) -> str:
 
 
 def parse_prices_and_eur(text: str) -> tuple[str, float | None, list[float]]:
-    """Returns (display_price, current_price_in_eur, all_product_prices_found)."""
     sanitized = strip_savings_and_installments(text)
     matches = re.findall(
         r"(\d[\d.,]*)\s*(ALL|Lekë|L|€|EUR)|(?:€|EUR)\s*(\d[\d.,]*)",
@@ -157,13 +156,11 @@ def parse_prices_and_eur(text: str) -> tuple[str, float | None, list[float]]:
 
 
 def extract_discount(text: str, raw_prices: list[float]) -> int:
-    # 1. Explicit percentage badges (supports -59%, Κέρδος 31,09%, 60% off)
     pct_matches = re.findall(r"(?<!\d)(\d{2})(?:[.,]\d+)?\s*%", text)
     valid = [int(m) for m in pct_matches if 5 <= int(m) <= 95]
     if valid:
         return max(valid)
 
-    # 2. Fallback: calculate from original price vs actual sale price (ignoring Κέρδος amount)
     if len(raw_prices) >= 2:
         high, low = max(raw_prices), min(raw_prices)
         if high > low > 0:
@@ -209,7 +206,9 @@ async def post_telegram_text(client: httpx.AsyncClient, token: str, chat_id: str
             "disable_web_page_preview": True,
         },
     )
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        print(f"Telegram API error {resp.status_code}: {resp.text}")
+        resp.raise_for_status()
 
 
 async def send_telegram(grouped_deals: dict[str, list[dict]]) -> None:
@@ -233,17 +232,25 @@ async def send_telegram(grouped_deals: dict[str, list[dict]]) -> None:
                 continue
 
             items.sort(key=lambda x: x["discount"], reverse=True)
-            lines = [f"<b>{bucket} ({len(items)})</b>"]
+            safe_bucket = html.escape(bucket)
+            lines = [f"<b>{safe_bucket} ({len(items)})</b>"]
             for d in items:
-                badge = f"<b>-{d['discount']}%</b>" if d["discount"] > 0 else f"<b>{d['wishlist']}</b>"
-                price = f" • <b>{d['price']}</b>" if d["price"] else ""
-                lines.append(f"• {badge} | {d['store']} | <a href=\"{d['url']}\">{d['title']}</a>{price}")
+                badge = (
+                    f"<b>-{d['discount']}%</b>"
+                    if d["discount"] > 0
+                    else f"<b>{html.escape(str(d['wishlist']))}</b>"
+                )
+                price = f" • <b>{html.escape(d['price'])}</b>" if d["price"] else ""
+                safe_store = html.escape(d["store"])
+                safe_title = html.escape(d["title"])
+                safe_url = html.escape(d["url"], quote=True)
+                lines.append(f'• {badge} | {safe_store} | <a href="{safe_url}">{safe_title}</a>{price}')
 
             chunk = ""
             for line in lines:
                 if len(chunk) + len(line) + 1 > 3800:
                     await post_telegram_text(client, token, chat_id, chunk)
-                    chunk = f"<b>{bucket} (cont.)</b>\n{line}"
+                    chunk = f"<b>{safe_bucket} (cont.)</b>\n{line}"
                 else:
                     chunk = f"{chunk}\n{line}" if chunk else line
             if chunk:
@@ -325,3 +332,69 @@ async def scrape_store(page, target: dict) -> list[dict]:
                     "is_tech": tech_flag,
                     "url": full_url,
                 }
+            )
+    print(f"  -> Found {len(deals)} matching deals on {store} (from {len(raw_cards)} raw cards)")
+    return deals
+
+
+async def launch_browser(p):
+    launch_args = [
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled",
+    ]
+    if os.getenv("GITHUB_ACTIONS"):
+        try:
+            return await p.chromium.launch(channel="chrome", headless=True, args=launch_args)
+        except Exception as exc:
+            print(f"System chrome failed ({exc}), falling back to bundled chromium...")
+    return await p.chromium.launch(headless=True, args=launch_args)
+
+
+async def main() -> None:
+    seen = load_seen()
+    all_deals = []
+
+    async with async_playwright() as p:
+        browser = await launch_browser(p)
+        context = await browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            ),
+            locale="el-GR",
+            viewport={"width": 1366, "height": 900},
+        )
+        await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        page = await context.new_page()
+        await page.route(
+            "**/*",
+            lambda route: route.abort()
+            if route.request.resource_type in {"image", "media", "font", "stylesheet"}
+            else route.continue_(),
+        )
+        for target in TARGETS:
+            all_deals.extend(await scrape_store(page, target))
+        await browser.close()
+
+    grouped_new = defaultdict(list)
+    new_count = 0
+
+    for d in all_deals:
+        key = f"{d['store']}|{d['url']}|{d['discount']}"
+        if key not in seen:
+            seen[key] = True
+            bucket = classify_bucket(d)
+            grouped_new[bucket].append(d)
+            new_count += 1
+
+    if new_count:
+        await send_telegram(grouped_new)
+        save_seen(seen)
+        print(f"\nSent & saved {new_count} new deals.")
+    else:
+        print("\nNo brand-new deals since last check.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
