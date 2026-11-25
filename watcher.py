@@ -44,11 +44,15 @@ TARGETS = [
     {"store": "Neptun Gaming", "url": "https://www.neptun.al/ns-newsarticle-black-friday-gaming", "card_selector": "[class*='product'], .product-item, article", "min_discount": 40},
     {"store": "Globe AL", "url": "https://globe.al/black-friday", "card_selector": ".product-miniature, .product-item, [class*='product']", "min_discount": 40},
     {"store": "Foleja AL", "url": "https://www.foleja.al/", "card_selector": ".product-box, .card-body, [class*='product']", "min_discount": 40},
+    {"store": "Tigo AL", "url": "https://tigoalbania.al/collections/all", "card_selector": ".product-item, .grid__item, .card-wrapper, [class*='product']", "min_discount": 40},
+    {"store": "Celular.al", "url": "https://www.celular.al/", "card_selector": ".product, .product-item, .grid__item, [class*='product']", "min_discount": 40},
+    {"store": "German Computers", "url": "https://www.germancomputers.al/", "card_selector": "li.product, .product-small, [class*='product']", "min_discount": 40},
 
     # --- KOSOVO (50% upwards) ---
     {"store": "Gjirafa50 KS", "url": "https://gjirafa50.com/te-gjitha-ne-zbritje-2026", "card_selector": ".product-item, [class*='product-box'], article", "min_discount": 50},
     {"store": "Neptun KS", "url": "https://www.neptun-ks.com/", "card_selector": "[class*='product'], .product-item, article", "min_discount": 50},
     {"store": "Aztech KS", "url": "https://aztechonline.com/offers", "card_selector": "[class*='product'], .product-item, article", "min_discount": 50},
+    {"store": "Albi Online", "url": "https://albionline.com/", "card_selector": "[class*='product'], .product-card, article, a[href*='/products/']", "min_discount": 50},
 
     # --- GREECE (60% upwards) ---
     {"store": "Plaisio GR", "url": "https://www.plaisio.gr/list/statusFlags--BlackFriday", "card_selector": "[class*='product'], .product-item, article", "min_discount": 60},
@@ -68,7 +72,7 @@ ELECTRONICS_KEYWORDS = [
 ]
 
 UI_NOISE_PATTERNS = re.compile(
-    r"^(black\s*friday|go\s*for\s*more|σύγκρινέ\s*το|προσθήκη.*|παράδοση.*|διαθέσιμο|μη\s*διαθέσιμο|κωδ\.\s*πλαίσιο.*|δωροεπιταγή.*)$",
+    r"^(black\s*friday|go\s*for\s*more|σύγκρινέ\s*το|προσθήκη.*|παράδοση.*|διαθέσιμο|μη\s*διαθέσιμο|κωδ\.\s*πλαίσιο.*|δωροεπιταγή.*|shto\s*në\s*shportë|zgjidhni\s*opsione|me\s*te\s*shiturat)$",
     re.IGNORECASE,
 )
 
